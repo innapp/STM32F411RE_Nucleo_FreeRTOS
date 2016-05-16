@@ -37,6 +37,9 @@
 #include "stm32f4xx_nucleo.h"
 #include "cmsis_os.h"
 #include "stdio.h"
+#include <arm_math.h>
+#include <math.h>
+#include "queue.h"
 
 /* USER CODE BEGIN Includes */
 
@@ -53,9 +56,12 @@ UART_HandleTypeDef huart2;
 static void SystemClock_Config(void);
 static void StartThread(void const * argument);
 static void SecondThread(void const * argument);
+static void ButtonThread(void const * argument);
 static void GPIO_Init(void);
 static void USART2_UART_Init(void);
 static void Error_Handler(void);
+
+static xQueueHandle buttonQueue;
 
 /* USER CODE BEGIN PFP */
 #ifdef __GNUC__
@@ -101,14 +107,22 @@ int main(void)
   printf("Hello STM32F411RE_Nucleo_FreeRTOS Demo!\r\n");
   printf("System clock: %uHz\r\n", SystemCoreClock);
 
+
+
   /* USER CODE END 2 */
 
   /* Init code generated for FreeRTOS */
   /* Create Start thread */
   osThreadDef(USER_Thread1, StartThread, osPriorityNormal, 0, configMINIMAL_STACK_SIZE);
   osThreadDef(USER_Thread2, SecondThread, osPriorityNormal, 0, configMINIMAL_STACK_SIZE);
+  osThreadDef(USER_Thread3, ButtonThread, osPriorityRealtime, 0, configMINIMAL_STACK_SIZE);
   osThreadCreate (osThread(USER_Thread1), NULL);
   osThreadCreate (osThread(USER_Thread2), NULL);
+  osThreadCreate (osThread(USER_Thread3), NULL);
+
+  buttonQueue = xQueueCreate(10, 1);
+
+
 
   /* Start scheduler */
   osKernelStart(NULL, NULL);
@@ -209,6 +223,7 @@ void GPIO_Init(void)
 {
   /* GPIO Ports Clock Enable */
   __GPIOA_CLK_ENABLE();
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5 , 0);
 }
 
 /**
@@ -218,9 +233,17 @@ void GPIO_Init(void)
   */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
+  char cIn;
+
+  portBASE_TYPE xHigherPriorityTaskWoken;
+  // We have not woken a task at the start of the ISR.
+  xHigherPriorityTaskWoken = pdFALSE;
   if(GPIO_Pin == KEY_BUTTON_PIN)
   {
-	  printf("Button pressed!\r\n");
+	  xQueueSendFromISR(buttonQueue, &cIn, &xHigherPriorityTaskWoken);
+	  // Actual macro used here is port specific.
+	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5 , 1);
+	  portYIELD_FROM_ISR (xHigherPriorityTaskWoken);
   }
 }
 /* USER CODE END 4 */
@@ -231,12 +254,7 @@ static void StartThread(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-	//printf("First! %d,\r\n",osKernelSysTick());
-
 	printf("First!\r\n");
-    BSP_LED_Off(LED2);
-    osDelay(1000);
-    BSP_LED_On(LED2);
     osDelay(1000);
   }
   /* USER CODE END 5 */ 
@@ -248,9 +266,32 @@ static void SecondThread(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1000);
-    printf("Second!\r\n");
+	__asm("nop"); //Do something
+    //osDelay(500);
+    //printf("Second!\r\n");
+  }
+  /* USER CODE END 5 */
+}
+static void ButtonThread(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+  /* Infinite loop */
 
+  for(;;)
+  {
+	  struct AMessage *pxRxedMessage;
+	  if( buttonQueue != 0 )
+	  {
+	  	// Receive a message on the created queue.  Block for 10 ticks if a
+	  	// message is not immediately available.
+	  	if( xQueueReceive( buttonQueue, &( pxRxedMessage ), ( portTickType ) 10 ) )
+	  	{
+	  		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5 , 0);
+	  		// pcRxedMessage now points to the struct AMessage variable posted
+	  		// by vATask.
+	  		printf("Button pressed!\r\n");
+	  	}
+	  }
   }
   /* USER CODE END 5 */
 }
@@ -278,7 +319,7 @@ static void Error_Handler(void)
   /* Blink LED */
   while(1)
   {
-	  BSP_LED_Toggle(LED2);
+	  //BSP_LED_Toggle(LED2);
 	  HAL_Delay(100);
   }
 }
